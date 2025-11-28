@@ -1,5 +1,5 @@
 """
-AI Inbetweening System - Lightweight Flask Server for Testing
+AI Inbetweening System - Flask API Server
 """
 
 import os
@@ -10,6 +10,36 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 from urllib.parse import quote
 import json
+import atexit
+from threading import Timer
+
+# プロジェクトルートを追加
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+# グローバル削除スケジューラー
+_delete_timers = []
+
+def _schedule_deletion(path_str: str, delay: int = 2):
+    """ファイル/ディレクトリの削除をスケジュール"""
+    def delete_path():
+        try:
+            path = Path(path_str)
+            if path.is_dir():
+                import shutil
+                shutil.rmtree(path)
+                print(f"✓ Auto-deleted directory: {path}")
+            elif path.is_file():
+                path.unlink()
+                print(f"✓ Auto-deleted file: {path}")
+        except Exception as e:
+            print(f"⚠ Failed to auto-delete {path_str}: {e}")
+    
+    timer = Timer(delay, delete_path)
+    timer.daemon = True
+    timer.start()
+    _delete_timers.append(timer)
+
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
@@ -370,14 +400,14 @@ def files():
 
 @app.route('/download')
 def download():
-    """ファイルダウンロード or ZIP 一括ダウンロード"""
+    """ファイルダウンロード or ZIP 一括ダウンロード（ダウンロード後に自動削除）"""
     path_param = request.args.get('path')
     if not path_param:
         return "path パラメータを指定してください", 400
     
     target = Path(path_param)
     
-    # ディレクトリの場合は ZIP を生成
+    # ディレクトリの場合は ZIP を生成してからディレクトリを削除
     if target.is_dir():
         import zipfile
         import io
@@ -391,6 +421,10 @@ def download():
                     zip_file.write(file, arcname=arcname)
         
         zip_buffer.seek(0)
+        
+        # ダウンロード完了後にディレクトリを削除するようスケジュール
+        _schedule_deletion(str(target), delay=2)
+        
         return send_file(
             zip_buffer,
             mimetype='application/zip',
@@ -401,6 +435,9 @@ def download():
     # ファイルの場合は直接ダウンロード
     if not target.exists() or not target.is_file():
         return f"ファイルが存在しません: {target}", 404
+    
+    # ダウンロード完了後にファイルを削除するようスケジュール
+    _schedule_deletion(str(target), delay=2)
     
     return send_file(str(target), as_attachment=True)
 
