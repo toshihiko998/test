@@ -5,20 +5,21 @@ AI Inbetweening System - Flask API Server
 import os
 import sys
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import secure_filename
-import io
+import traceback
 
 # プロジェクトルートを追加
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from src import InbetWeeningEngine
+# 遅延インポート（エラーハンドリング付き）
+InbetWeeningEngine = None
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['OUTPUT_FOLDER'] = 'output'
+app.config['UPLOAD_FOLDER'] = os.path.join(project_root, 'uploads')
+app.config['OUTPUT_FOLDER'] = os.path.join(project_root, 'output')
 
 # アップロードフォルダを作成
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -29,11 +30,17 @@ engine = None
 
 def init_engine():
     """エンジンを初期化"""
-    global engine
+    global engine, InbetWeeningEngine
     if engine is None:
-        device = 'cuda' if os.environ.get('CUDA_AVAILABLE') == '1' else 'cpu'
-        engine = InbetWeeningEngine(device=device, model_type='rife')
-        print(f"✓ Engine initialized on {device}")
+        try:
+            from src import InbetWeeningEngine as Engine
+            InbetWeeningEngine = Engine
+            device = 'cuda' if os.environ.get('CUDA_AVAILABLE') == '1' else 'cpu'
+            engine = InbetWeeningEngine(device=device, model_type='rife')
+            print(f"✓ Engine initialized on {device}")
+        except Exception as e:
+            print(f"⚠ Error initializing engine: {e}")
+            print(traceback.format_exc())
 
 
 @app.route('/')
@@ -358,23 +365,23 @@ def generate():
     try:
         # ファイルの取得
         if 'frame1' not in request.files or 'frame2' not in request.files:
-            return 'フレーム画像が見つかりません', 400
+            return jsonify({'error': 'フレーム画像が見つかりません'}), 400
         
         frame1_file = request.files['frame1']
         frame2_file = request.files['frame2']
         
         if frame1_file.filename == '' or frame2_file.filename == '':
-            return 'ファイルが選択されていません', 400
+            return jsonify({'error': 'ファイルが選択されていません'}), 400
         
         num_frames = int(request.form.get('num_frames', 4))
         fps = int(request.form.get('fps', 24))
         
         # 入力範囲チェック
         if num_frames < 2 or num_frames > 30:
-            return 'フレーム数は2～30の範囲で指定してください', 400
+            return jsonify({'error': 'フレーム数は2～30の範囲で指定してください'}), 400
         
         if fps < 15 or fps > 60:
-            return 'FPSは15～60の範囲で指定してください', 400
+            return jsonify({'error': 'FPSは15～60の範囲で指定してください'}), 400
         
         # ファイルを一時保存
         frame1_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename('frame1_' + frame1_file.filename))
@@ -385,6 +392,10 @@ def generate():
         
         # フレームを生成
         init_engine()
+        
+        if engine is None:
+            return jsonify({'error': 'エンジンの初期化に失敗しました'}), 500
+        
         frames = engine.generate(
             frame1_path,
             frame2_path,
@@ -401,9 +412,8 @@ def generate():
     
     except Exception as e:
         print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return f'エラーが発生しました: {str(e)}', 500
+        print(traceback.format_exc())
+        return jsonify({'error': f'エラーが発生しました: {str(e)}'}), 500
     finally:
         # 一時ファイルを削除
         try:
