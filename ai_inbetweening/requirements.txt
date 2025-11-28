@@ -6,3 +6,5 @@ Pillow>=10.0.0
 imageio>=2.33.0
 scikit-image>=0.21.0
 tqdm>=4.66.0
+flask>=2.3.0
+werkzeug>=2.3.0
