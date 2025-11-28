@@ -44,11 +44,50 @@ class FrameInterpolator:
         Returns:
             生成された中割フレームのリスト
         """
+        # フレームサイズを揃える
+        frame1, frame2 = self._align_frames(frame1, frame2)
+        
         if self.model_type == 'rife':
             return self._interpolate_rife(frame1, frame2, num_frames)
         else:
             # デフォルトは線形補間
             return self._interpolate_linear(frame1, frame2, num_frames)
+    
+    @staticmethod
+    def _align_frames(frame1: np.ndarray, frame2: np.ndarray) -> tuple:
+        """
+        2つのフレームサイズを揃える
+        
+        Args:
+            frame1: 最初のフレーム
+            frame2: 2番目のフレーム
+        
+        Returns:
+            揃えられたフレームのタプル
+        """
+        from PIL import Image
+        
+        h1, w1 = frame1.shape[:2]
+        h2, w2 = frame2.shape[:2]
+        
+        if (h1, w1) == (h2, w2):
+            return frame1, frame2
+        
+        # 小さい方のサイズに揃える
+        target_h = min(h1, h2)
+        target_w = min(w1, w2)
+        
+        print(f"⚠ Frame size mismatch: ({h1}x{w1}) vs ({h2}x{w2})")
+        print(f"  Resizing to: {target_h}x{target_w}")
+        
+        # PIL を使用してリサイズ
+        img1 = Image.fromarray(frame1).resize((target_w, target_h), Image.LANCZOS)
+        img2 = Image.fromarray(frame2).resize((target_w, target_h), Image.LANCZOS)
+        
+        frame1_resized = np.array(img1)
+        frame2_resized = np.array(img2)
+        
+        return frame1_resized, frame2_resized
     
     def _interpolate_linear(
         self,
