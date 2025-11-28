@@ -378,10 +378,14 @@ def health():
 
 
 if __name__ == '__main__':
+    import sys
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
+    
     print("\n" + "=" * 60)
     print("AI Inbetweening System - Lightweight Server")
     print("=" * 60)
-    print(f"URL: http://10.0.1.54:5000")
+    print(f"Port: {port}")
+    print(f"URL: http://localhost:{port}")
     print("=" * 60 + "\n")
     
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
