@@ -336,13 +336,25 @@ def files():
     
     files_list = sorted(target_dir.iterdir(), key=lambda p: p.name)
     html = ["<html><head><meta charset=\"utf-8\"><title>ファイル一覧</title>"]
-    html.append("<style>body { font-family: Arial; margin: 20px; }")
-    html.append("table { border-collapse: collapse; width: 100%; }")
+    html.append("<style>")
+    html.append("body { font-family: Arial; margin: 20px; }")
+    html.append("table { border-collapse: collapse; width: 100%; margin-top: 20px; }")
     html.append("th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }")
     html.append("th { background-color: #667eea; color: white; }")
     html.append("a { color: #667eea; text-decoration: none; }")
-    html.append("a:hover { text-decoration: underline; }</style></head><body>")
+    html.append("a:hover { text-decoration: underline; }")
+    html.append(".btn-group { margin: 20px 0; }")
+    html.append(".btn { display: inline-block; padding: 10px 20px; margin-right: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 5px; }")
+    html.append(".btn:hover { opacity: 0.9; }")
+    html.append("</style></head><body>")
     html.append(f"<h2>保存先: {target_dir}</h2>")
+    
+    # 一括ダウンロードボタン
+    download_url = f"/download?path={quote(str(target_dir))}"
+    html.append('<div class="btn-group">')
+    html.append(f'<a href="{download_url}" class="btn">📦 全ファイルをZIPでダウンロード</a>')
+    html.append('</div>')
+    
     html.append("<table><tr><th>ファイル名</th><th>サイズ</th><th>操作</th></tr>")
     
     for f in files_list:
@@ -358,13 +370,35 @@ def files():
 
 @app.route('/download')
 def download():
-    """ファイルダウンロード"""
+    """ファイルダウンロード or ZIP 一括ダウンロード"""
     path_param = request.args.get('path')
     if not path_param:
         return "path パラメータを指定してください", 400
     
     target = Path(path_param)
     
+    # ディレクトリの場合は ZIP を生成
+    if target.is_dir():
+        import zipfile
+        import io
+        
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for file in sorted(target.iterdir()):
+                if file.is_file():
+                    arcname = f"{target.name}/{file.name}"
+                    zip_file.write(file, arcname=arcname)
+        
+        zip_buffer.seek(0)
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"{target.name}.zip"
+        )
+    
+    # ファイルの場合は直接ダウンロード
     if not target.exists() or not target.is_file():
         return f"ファイルが存在しません: {target}", 404
     
