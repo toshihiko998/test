@@ -114,6 +114,9 @@ def index():
             label input[type="checkbox"] {
                 cursor: pointer;
             }
+            select {
+                cursor: pointer;
+            }
             input:focus, select:focus {
                 outline: none;
                 border-color: #667eea;
@@ -192,15 +195,17 @@ def index():
                 </div>
 
                 <div class="form-group">
-                    <label for="outputSubdir">出力保存先サブディレクトリ（任意）</label>
-                    <input type="text" id="outputSubdir" name="output_subdir" placeholder="例: my_run_001">
+                    <label for="interpolationMode">補間モード</label>
+                    <select id="interpolationMode" name="interpolation_mode">
+                        <option value="toon">🎨 ToonComposer スタイル（推奨）- エッジ保存、色補正</option>
+                        <option value="morph">🔄 モーフィング補間 - ポーズ・スケール対応</option>
+                        <option value="rife">⚡ 光学フロー補間 - 高速</option>
+                    </select>
                 </div>
 
                 <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="useMorphing" name="use_morphing" checked>
-                        ✨ 高度なポーズ・スケール補間を使用（時間がかかります）
-                    </label>
+                    <label for="outputSubdir">出力保存先サブディレクトリ（任意）</label>
+                    <input type="text" id="outputSubdir" name="output_subdir" placeholder="例: my_run_001">
                 </div>
 
                 <button type="submit" id="submitBtn">🚀 中割を生成</button>
@@ -225,7 +230,7 @@ def index():
                 const numFrames = document.getElementById('numFrames').value;
                 const fps = document.getElementById('fps').value;
                 const outputSubdir = document.getElementById('outputSubdir')?.value || '';
-                const useMorphing = document.getElementById('useMorphing')?.checked ? 'true' : 'false';
+                const interpolationMode = document.getElementById('interpolationMode')?.value || 'toon';
 
                 if (!frame1 || !frame2) {
                     showMessage('両方のキーフレーム画像を選択してください', 'error');
@@ -238,7 +243,7 @@ def index():
                 formData.append('num_frames', numFrames);
                 formData.append('fps', fps);
                 formData.append('output_subdir', outputSubdir);
-                formData.append('use_morphing', useMorphing);
+                formData.append('interpolation_mode', interpolationMode);
 
                 showMessage('処理中... 少々お待ちください...', 'info');
                 document.getElementById('submitBtn').disabled = true;
@@ -295,7 +300,8 @@ def generate():
         num_frames = int(request.form.get('num_frames', 4))
         fps = int(request.form.get('fps', 24))
         output_subdir = (request.form.get('output_subdir') or '').strip()
-        use_morphing = request.form.get('use_morphing', 'true').lower() == 'true'
+        use_morphing = request.form.get('use_morphing', 'false').lower() == 'true'
+        interpolation_mode = request.form.get('interpolation_mode', 'toon')  # toon, morph, rife
         
         if num_frames < 2 or num_frames > 30:
             return jsonify({'error': 'フレーム数は2～30の範囲で指定してください'}), 400
@@ -321,7 +327,7 @@ def generate():
         
         # ここから実際のエンジン処理
         from src import InbetWeeningEngine
-        engine = InbetWeeningEngine(device='cpu', model_type='rife')
+        engine = InbetWeeningEngine(device='cpu', model_type=interpolation_mode)
         
         # 画像読み込み
         from PIL import Image
@@ -330,13 +336,17 @@ def generate():
         frame1 = np.array(Image.open(frame1_path).convert('RGB'))
         frame2 = np.array(Image.open(frame2_path).convert('RGB'))
         
-        # モーフィングまたは通常の補間を選択
+        # 補間モード選択
         interpolator = engine.interpolator
-        if use_morphing:
+        
+        if interpolation_mode == 'toon':
+            print("✓ Using ToonComposer-style interpolation (edge-preserving, color-aware)")
+            frames = interpolator.interpolate(frame1, frame2, num_frames)
+        elif interpolation_mode == 'morph':
             print("✓ Using morphing interpolation with pose/scale aware features")
             frames = interpolator.interpolate_with_morphing(frame1, frame2, num_frames, use_feature_matching=True)
         else:
-            print("✓ Using standard optical flow interpolation")
+            print("✓ Using standard RIFE optical flow interpolation")
             frames = engine.generate(
                 frame1_path,
                 frame2_path,

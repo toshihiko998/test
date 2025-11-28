@@ -17,14 +17,19 @@ class FrameInterpolator:
         Initialize the frame interpolator
         
         Args:
-            model_type: 使用するモデルのタイプ
+            model_type: 使用するモデルのタイプ ('rife', 'morph', 'toon')
             device: PyTorchデバイス ('cuda' or 'cpu')
         """
         self.model_type = model_type
         self.device = device
         
-        # TODO: 実際のモデルをここで読み込む
-        # 現在は簡易版（線形補間）を使用
+        # ToonComposer スタイルの補間エンジンを初期化
+        if model_type == 'toon':
+            from .toon_style_interpolator import ToonStyleInterpolator
+            self.toon_interpolator = ToonStyleInterpolator()
+        else:
+            self.toon_interpolator = None
+        
         print(f"Frame Interpolator initialized with model: {model_type}")
     
     def interpolate(
@@ -47,10 +52,17 @@ class FrameInterpolator:
         # フレームサイズを揃える
         frame1, frame2 = self._align_frames(frame1, frame2)
         
-        if self.model_type == 'rife':
+        if self.model_type == 'toon':
+            # ToonComposer スタイルの補間
+            return self.toon_interpolator.interpolate_with_edge_linking(
+                frame1, frame2, num_frames
+            )
+        elif self.model_type == 'rife':
             return self._interpolate_rife(frame1, frame2, num_frames)
+        elif self.model_type == 'morph':
+            return self.interpolate_with_morphing(frame1, frame2, num_frames)
         else:
-            # デフォルトは線形補間
+            # デフォルト：線形補間
             return self._interpolate_linear(frame1, frame2, num_frames)
     
     @staticmethod
