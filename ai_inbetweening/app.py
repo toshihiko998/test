@@ -272,6 +272,11 @@ def index():
                     <input type="number" id="fps" name="fps" value="24" min="15" max="60">
                 </div>
 
+                <div class="form-group">
+                    <label for="outputSubdir">出力保存先サブディレクトリ（任意）</label>
+                    <input type="text" id="outputSubdir" name="output_subdir" placeholder="例: my_run_001">
+                </div>
+
                 <button type="submit" id="submitBtn">🚀 中割を生成</button>
             </form>
 
@@ -298,6 +303,7 @@ def index():
                 const frame2 = document.getElementById('frame2').files[0];
                 const numFrames = document.getElementById('numFrames').value;
                 const fps = document.getElementById('fps').value;
+                const outputSubdir = document.getElementById('outputSubdir')?.value || '';
 
                 if (!frame1 || !frame2) {
                     showMessage('両方のキーフレーム画像を選択してください', 'error');
@@ -309,32 +315,32 @@ def index():
                 formData.append('frame2', frame2);
                 formData.append('num_frames', numFrames);
                 formData.append('fps', fps);
+                formData.append('output_subdir', outputSubdir);
 
                 showMessage('処理中... 少々お待ちください...', 'loading');
                 document.getElementById('progressBar').style.display = 'block';
                 document.getElementById('submitBtn').disabled = true;
 
                 try {
-                    const response = await fetch('/generate', {
-                        method: 'POST',
-                        body: formData
-                    });
+                        const response = await fetch('/generate', {
+                            method: 'POST',
+                            body: formData
+                        });
 
-                    if (response.ok) {
-                        const blob = await response.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'inbetweening.mp4';
-                        document.body.appendChild(a);
-                        a.click();
-                        window.URL.revokeObjectURL(url);
-                        document.body.removeChild(a);
-                        showMessage('✅ 生成完了！動画をダウンロードしました', 'success');
-                    } else {
-                        const error = await response.text();
-                        showMessage('❌ エラー: ' + error, 'error');
-                    }
+                        if (response.ok) {
+                            // サーバーは生成完了後の一覧ページURLを返す
+                            const data = await response.json();
+                            if (data && data.list_url) {
+                                // 一覧ページへ移動
+                                window.location.href = data.list_url;
+                            } else {
+                                showMessage('✅ 生成完了しました', 'success');
+                            }
+                        } else {
+                            const data = await response.json().catch(() => null);
+                            const msg = data?.error || await response.text();
+                            showMessage('❌ エラー: ' + msg, 'error');
+                        }
                 } catch (error) {
                     showMessage('❌ 通信エラー: ' + error.message, 'error');
                 } finally {
@@ -392,23 +398,52 @@ def generate():
         
         # フレームを生成
         init_engine()
-        
+
         if engine is None:
             return jsonify({'error': 'エンジンの初期化に失敗しました'}), 500
-        
+
+        # オプション: 出力サブディレクトリを指定
+        output_subdir = (request.form.get('output_subdir') or '').strip()
+        if output_subdir:
+            safe_subdir = secure_filename(output_subdir)
+            save_dir = os.path.join(app.config['OUTPUT_FOLDER'], safe_subdir)
+        else:
+            save_dir = app.config['OUTPUT_FOLDER']
+
+        os.makedirs(save_dir, exist_ok=True)
+
+        # エンジンに保存させず、ここでタイムスタンプ付きの名前で保存する
         frames = engine.generate(
             frame1_path,
             frame2_path,
             num_frames=num_frames,
-            save_path=app.config['OUTPUT_FOLDER']
+            save_path=None
         )
-        
-        # 動画をエクスポート
-        video_path = os.path.join(app.config['OUTPUT_FOLDER'], 'output.mp4')
+
+        # タイムスタンプ付きのファイル名を付けて保存
+        from datetime import datetime
+        from PIL import Image
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        # save frames as <timestamp>_frame_0000.png ...
+        for idx, frame in enumerate(frames):
+            if hasattr(frame, 'dtype') and (frame.dtype == 'float32' or frame.dtype == 'float64'):
+                frame_to_save = (frame * 255).astype('uint8')
+            else:
+                frame_to_save = frame
+            img = Image.fromarray(frame_to_save)
+            out_name = os.path.join(save_dir, f"{ts}_frame_{idx:04d}.png")
+            img.save(out_name)
+
+        # 動画をエクスポート (timestamp付き)
+        video_name = f"{ts}_output.mp4"
+        video_path = os.path.join(save_dir, video_name)
         engine.export_video(frames, video_path, fps=fps)
-        
-        # ファイルを送信
-        return send_file(video_path, mimetype='video/mp4', as_attachment=True, download_name='inbetweening.mp4')
+
+        # 生成後は一覧ページに遷移するURLを返す (クライアント側でリダイレクト)
+        from urllib.parse import quote
+        list_url = f"/files?dir={quote(save_dir)}"
+        return jsonify({'status': 'ok', 'list_url': list_url})
     
     except Exception as e:
         print(f"Error: {e}")
@@ -429,6 +464,68 @@ def generate():
 def health():
     """ヘルスチェック"""
     return jsonify({'status': 'ok'})
+
+
+def _is_absolute_allowed(path_str: str) -> bool:
+    """絶対パスの書き込みを許可するか確認。
+
+    セキュリティのため、環境変数 `ALLOW_ABSOLUTE_SAVE=1` が必要。
+    """
+    if not path_str:
+        return True
+    p = Path(path_str)
+    if p.is_absolute():
+        return os.environ.get('ALLOW_ABSOLUTE_SAVE') == '1'
+    return True
+
+
+@app.route('/files')
+def files():
+    """指定ディレクトリ内のファイル一覧表示"""
+    dir_param = request.args.get('dir')
+    if not dir_param:
+        return "dir パラメータを指定してください", 400
+
+    # URLデコードはフレームワークが自動で行うが安全チェックを行う
+    target_dir = Path(dir_param)
+    if not _is_absolute_allowed(str(target_dir)):
+        return "絶対パスへの保存は許可されていません。環境変数 ALLOW_ABSOLUTE_SAVE=1 を設定してください。", 403
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        return f"ディレクトリが存在しません: {target_dir}", 404
+
+    # 一覧 HTML を生成
+    files = sorted(target_dir.iterdir(), key=lambda p: p.name)
+    html = ["<html><head><meta charset=\"utf-8\"><title>ファイル一覧</title></head><body>"]
+    html.append(f"<h2>Directory: {target_dir}</h2>")
+    html.append('<ul>')
+    for f in files:
+        name = f.name
+        href = f"/download?path={quote(str(f))}"
+        html.append(f'<li><a href="{href}">{name}</a></li>')
+    html.append('</ul>')
+    html.append('</body></html>')
+    return '\n'.join(html)
+
+
+from urllib.parse import unquote, quote
+
+
+@app.route('/download')
+def download():
+    """ファイルをダウンロードするためのシンプルなエンドポイント"""
+    path_param = request.args.get('path')
+    if not path_param:
+        return "path パラメータを指定してください", 400
+
+    target = Path(path_param)
+    if not _is_absolute_allowed(str(target)):
+        return "絶対パスへのダウンロードは許可されていません。", 403
+
+    if not target.exists() or not target.is_file():
+        return f"ファイルが存在しません: {target}", 404
+
+    return send_file(str(target), as_attachment=True)
 
 
 if __name__ == '__main__':
