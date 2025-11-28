@@ -107,6 +107,13 @@ def index():
                 font-size: 14px;
                 transition: border-color 0.3s;
             }
+            input[type="checkbox"] {
+                width: auto;
+                margin-right: 8px;
+            }
+            label input[type="checkbox"] {
+                cursor: pointer;
+            }
             input:focus, select:focus {
                 outline: none;
                 border-color: #667eea;
@@ -189,6 +196,13 @@ def index():
                     <input type="text" id="outputSubdir" name="output_subdir" placeholder="例: my_run_001">
                 </div>
 
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="useMorphing" name="use_morphing" checked>
+                        ✨ 高度なポーズ・スケール補間を使用（時間がかかります）
+                    </label>
+                </div>
+
                 <button type="submit" id="submitBtn">🚀 中割を生成</button>
             </form>
 
@@ -211,6 +225,7 @@ def index():
                 const numFrames = document.getElementById('numFrames').value;
                 const fps = document.getElementById('fps').value;
                 const outputSubdir = document.getElementById('outputSubdir')?.value || '';
+                const useMorphing = document.getElementById('useMorphing')?.checked ? 'true' : 'false';
 
                 if (!frame1 || !frame2) {
                     showMessage('両方のキーフレーム画像を選択してください', 'error');
@@ -223,6 +238,7 @@ def index():
                 formData.append('num_frames', numFrames);
                 formData.append('fps', fps);
                 formData.append('output_subdir', outputSubdir);
+                formData.append('use_morphing', useMorphing);
 
                 showMessage('処理中... 少々お待ちください...', 'info');
                 document.getElementById('submitBtn').disabled = true;
@@ -264,7 +280,7 @@ def index():
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    """フレームを生成（テスト版：実際のエンジン実行の代わりに、テスト画像を生成）"""
+    """フレームを生成"""
     
     try:
         if 'frame1' not in request.files or 'frame2' not in request.files:
@@ -279,6 +295,7 @@ def generate():
         num_frames = int(request.form.get('num_frames', 4))
         fps = int(request.form.get('fps', 24))
         output_subdir = (request.form.get('output_subdir') or '').strip()
+        use_morphing = request.form.get('use_morphing', 'true').lower() == 'true'
         
         if num_frames < 2 or num_frames > 30:
             return jsonify({'error': 'フレーム数は2～30の範囲で指定してください'}), 400
@@ -306,17 +323,29 @@ def generate():
         from src import InbetWeeningEngine
         engine = InbetWeeningEngine(device='cpu', model_type='rife')
         
-        frames = engine.generate(
-            frame1_path,
-            frame2_path,
-            num_frames=num_frames,
-            save_path=None
-        )
+        # 画像読み込み
+        from PIL import Image
+        import numpy as np
+        
+        frame1 = np.array(Image.open(frame1_path).convert('RGB'))
+        frame2 = np.array(Image.open(frame2_path).convert('RGB'))
+        
+        # モーフィングまたは通常の補間を選択
+        interpolator = engine.interpolator
+        if use_morphing:
+            print("✓ Using morphing interpolation with pose/scale aware features")
+            frames = interpolator.interpolate_with_morphing(frame1, frame2, num_frames, use_feature_matching=True)
+        else:
+            print("✓ Using standard optical flow interpolation")
+            frames = engine.generate(
+                frame1_path,
+                frame2_path,
+                num_frames=num_frames,
+                save_path=None
+            )
         
         # タイムスタンプ付きで保存
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        from PIL import Image
-        import numpy as np
         
         for idx, frame in enumerate(frames):
             if hasattr(frame, 'dtype') and (frame.dtype == 'float32' or frame.dtype == 'float64'):
