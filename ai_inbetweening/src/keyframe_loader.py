@@ -2,7 +2,7 @@
 キーフレーム画像ローダーモジュール
 """
 
-import cv2
+from PIL import Image
 import numpy as np
 from pathlib import Path
 from typing import Union
@@ -36,18 +36,15 @@ class KeyframeLoader:
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
         
-        # 画像をBGR形式で読み込む
-        image_bgr = cv2.imread(str(image_path))
-        
-        if image_bgr is None:
-            raise ValueError(f"Failed to load image: {image_path}")
-        
-        # BGR → RGB に変換
-        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        # Pillow で画像を読み込む（RGB形式）
+        img = Image.open(str(image_path)).convert('RGB')
         
         # リサイズ処理
         if self.target_size is not None:
-            image_rgb = cv2.resize(image_rgb, self.target_size, interpolation=cv2.INTER_LANCZOS4)
+            img = img.resize(self.target_size, Image.LANCZOS)
+        
+        # NumPy配列に変換
+        image_rgb = np.array(img)
         
         return image_rgb.astype(np.uint8)
     

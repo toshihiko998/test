@@ -19,11 +19,19 @@ InbetWeeningEngine = None
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
 app.config['UPLOAD_FOLDER'] = os.path.join(project_root, 'uploads')
-app.config['OUTPUT_FOLDER'] = os.path.join(project_root, 'output')
+
+# 環境変数で出力フォルダを指定可能（デフォルトはプロジェクト内）
+output_base = os.environ.get('OUTPUT_BASE_PATH')
+if output_base and output_base.strip():
+    app.config['OUTPUT_FOLDER'] = output_base.strip()
+else:
+    app.config['OUTPUT_FOLDER'] = os.path.join(project_root, 'output')
 
 # アップロードフォルダを作成
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
+
+print(f"✓ OUTPUT_FOLDER: {app.config['OUTPUT_FOLDER']}")
 
 # グローバルエンジン
 engine = None
