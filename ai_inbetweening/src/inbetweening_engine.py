@@ -126,7 +126,10 @@ class InbetWeeningEngine:
         fps: int = 24
     ) -> None:
         """フレームを動画ファイルにエクスポート"""
+        import imageio_ffmpeg
         import imageio
+        
+        output_path = str(output_path)
         
         # NumPy配列をuint8に変換
         frames_uint8 = []
@@ -135,5 +138,29 @@ class InbetWeeningEngine:
                 frame = (frame * 255).astype(np.uint8)
             frames_uint8.append(frame)
         
-        imageio.mimsave(output_path, frames_uint8, fps=fps)
+        # imageio-ffmpeg を使用して MP4 を生成
+        try:
+            writer = imageio.get_writer(output_path, fps=fps, codec='libx264', pixelformat='yuv420p')
+            for frame in frames_uint8:
+                writer.append_data(frame)
+            writer.close()
+        except Exception as e:
+            # フォールバック: OpenCV を使用（インストールされている場合）
+            print(f"⚠ FFmpeg write failed: {e}, trying alternative method...")
+            try:
+                import cv2
+                h, w = frames_uint8[0].shape[:2]
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+                for frame in frames_uint8:
+                    if len(frame.shape) == 2:  # グレースケール
+                        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+                    else:
+                        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    out.write(frame)
+                out.release()
+            except Exception as e2:
+                print(f"✗ Both methods failed: {e2}")
+                raise
+        
         print(f"Video saved: {output_path}")
