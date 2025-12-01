@@ -386,10 +386,22 @@ def generate():
 
         if interpolation_mode == 'toon':
             print("✓ Using ToonComposer-style interpolation (edge-preserving, color-aware)")
-            frames = interpolator.interpolate(frame1, frame2, num_frames)
+            try:
+                frames = interpolator.interpolate(frame1, frame2, num_frames)
+            except Exception as e:
+                print(f"Error during toon interpolation: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({'error': f'Toon interpolation failed: {str(e)}'}), 500
         elif interpolation_mode == 'morph':
             print("✓ Using morphing interpolation with pose/scale aware features")
-            frames = interpolator.interpolate_with_morphing(frame1, frame2, num_frames, use_feature_matching=True)
+            try:
+                frames = interpolator.interpolate_with_morphing(frame1, frame2, num_frames, use_feature_matching=True)
+            except Exception as e:
+                print(f"Error during morph interpolation: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({'error': f'Morph interpolation failed: {str(e)}'}), 500
         else:
             print("✓ Using standard RIFE optical flow interpolation")
             frames = engine.generate(
