@@ -44,6 +44,20 @@ def _schedule_deletion(path_str: str, delay: int = 2):
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
 
+
+# グローバル例外ハンドラ: どの例外でも JSON を返す
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    import traceback
+    traceback.print_exc()
+    # HTTPException の場合はステータスコードを流用
+    try:
+        code = e.code if hasattr(e, 'code') else 500
+    except Exception:
+        code = 500
+    # 安全なエラーメッセージを返す
+    return jsonify({'error': f'サーバーエラーが発生しました: {str(e)}'}), code
+
 project_root = Path(__file__).parent
 app.config['UPLOAD_FOLDER'] = os.path.join(project_root, 'uploads')
 
@@ -254,7 +268,25 @@ def index():
                         body: formData
                     });
 
-                    const data = await response.json();
+                    // 安全に JSON をパースする（非JSONや空レスポンスに対応）
+                    let data = null;
+                    const contentType = response.headers.get('content-type') || '';
+                    if (contentType.includes('application/json')) {
+                        try {
+                            data = await response.json();
+                        } catch (e) {
+                            console.warn('Invalid JSON from /generate:', e);
+                            data = null;
+                        }
+                    } else {
+                        // JSON でなければテキストとして読む（エラーメッセージ取得用）
+                        try {
+                            const txt = await response.text();
+                            data = { text: txt };
+                        } catch (e) {
+                            data = null;
+                        }
+                    }
 
                     if (response.ok) {
                         if (data && data.list_url) {
@@ -263,7 +295,8 @@ def index():
                             showMessage('✅ 生成完了しました', 'success');
                         }
                     } else {
-                        showMessage('❌ エラー: ' + (data?.error || 'Unknown error'), 'error');
+                        const errMsg = data?.error || data?.text || 'Unknown error';
+                        showMessage('❌ エラー: ' + errMsg, 'error');
                     }
                 } catch (error) {
                     showMessage('❌ 通信エラー: ' + error.message, 'error');
