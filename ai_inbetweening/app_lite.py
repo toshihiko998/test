@@ -323,6 +323,16 @@ def generate():
     frame1_path = None
     frame2_path = None
     try:
+        # デバッグ: 受信リクエスト情報をログ出力（フォーム、ファイル名）
+        try:
+            form_dict = dict(request.form)
+        except Exception:
+            form_dict = {}
+        try:
+            files_info = {k: getattr(request.files[k], 'filename', None) for k in request.files}
+        except Exception:
+            files_info = {}
+        print(f"/generate called - form={form_dict}, files={files_info}")
         if 'frame1' not in request.files or 'frame2' not in request.files:
             return jsonify({'error': 'フレーム画像が見つかりません'}), 400
 
