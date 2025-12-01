@@ -6,12 +6,6 @@ import pytest
 import numpy as np
 from pathlib import Path
 from PIL import Image
-import tempfile
-import sys
-
-# プロジェクトルートを追加
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from src.keyframe_loader import KeyframeLoader
 

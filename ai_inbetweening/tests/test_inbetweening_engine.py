@@ -6,13 +6,6 @@ import pytest
 import numpy as np
 from pathlib import Path
 from PIL import Image
-import tempfile
-import sys
-import os
-
-# プロジェクトルートを追加
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from src import InbetWeeningEngine
 

@@ -5,11 +5,6 @@ ToonStyleInterpolator ユニットテスト
 import pytest
 import numpy as np
 from pathlib import Path
-import sys
-
-# プロジェクトルートを追加
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from src.toon_style_interpolator import ToonStyleInterpolator
 
