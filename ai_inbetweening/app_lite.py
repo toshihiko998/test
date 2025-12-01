@@ -12,6 +12,8 @@ from urllib.parse import quote
 import json
 import atexit
 from threading import Timer
+import traceback
+import io
 
 # プロジェクトルートを追加
 project_root = Path(__file__).parent
@@ -43,6 +45,104 @@ def _schedule_deletion(path_str: str, delay: int = 2):
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
+
+
+def _safe_json_response(obj, status=200):
+    """JSON を確実に返すヘルパー。非 ASCII を保持し UTF-8 を設定する。"""
+    try:
+        payload = json.dumps(obj, ensure_ascii=False)
+    except Exception:
+        # オブジェクトがシリアライズ不可の場合は簡易なメッセージに置き換える
+        payload = json.dumps({'error': 'Unable to serialize response object'}, ensure_ascii=False)
+    resp = app.response_class(payload.encode('utf-8'), mimetype='application/json')
+    resp.status_code = status
+    resp.headers['Content-Type'] = 'application/json; charset=utf-8'
+    return resp
+
+
+@app.after_request
+def normalize_json_response(response):
+    """/generate への応答を中心に、空・部分的・非JSON・巨大なレスポンスを検出して
+    安全な JSON に置換するミドルウェア。問題があればサーバーログへ生レスポンスを記録する。
+    """
+    try:
+        path = request.path if hasattr(request, 'path') else ''
+        content_type = (response.headers.get('Content-Type') or '').lower()
+        data = response.get_data() or b''
+        data_len = len(data)
+
+        # まず /generate に限定して強化（その他のエンドポイントはそのまま通す）
+        if not path.startswith('/generate'):
+            return response
+
+        # ストリーミング応答や direct passthrough は安全ではないため置換
+        is_streamed = getattr(response, 'is_streamed', False) or getattr(response, 'direct_passthrough', False)
+        if is_streamed:
+            msg = 'Streaming responses are not allowed for /generate'
+            try:
+                with open('/tmp/inbetweening_server.log', 'a') as f:
+                    f.write(f"[normalize] {datetime.now().isoformat()} STREAMING_RESPONSE\n")
+            except Exception:
+                pass
+            return _safe_json_response({'error': msg}, status=500)
+
+        # 空の application/json 応答 -> エラーJSONに置換
+        if 'application/json' in content_type and data_len == 0:
+            try:
+                with open('/tmp/inbetweening_server.log', 'a') as f:
+                    f.write(f"[normalize] {datetime.now().isoformat()} EMPTY_JSON_RESPONSE\n")
+            except Exception:
+                pass
+            return _safe_json_response({'error': 'Empty JSON response from server'}, status=response.status_code or 500)
+
+        # application/json ならパースして整合性をチェック
+        if 'application/json' in content_type:
+            text = data.decode('utf-8', errors='replace')
+            try:
+                json.loads(text)
+            except Exception as e:
+                # 部分的・不正な JSON を検出した場合、生のプレビューをログに吐きつつエラーJSONに置換
+                preview = text[:1000]
+                try:
+                    with open('/tmp/inbetweening_server.log', 'a') as f:
+                        f.write(f"[normalize] {datetime.now().isoformat()} MALFORMED_JSON len={data_len} err={str(e)}\n")
+                        f.write(preview + "\n---\n")
+                except Exception:
+                    pass
+                return _safe_json_response({'error': 'Malformed JSON response from server', 'raw_preview': preview, 'raw_len': data_len}, status=500)
+
+        # JSON 以外のコンテンツタイプ -> /generate に対してはラップ（ステータスに関わらず）
+        if ('application/json' not in content_type):
+            text = data.decode('utf-8', errors='replace')
+            preview = text[:1000]
+            try:
+                with open('/tmp/inbetweening_server.log', 'a') as f:
+                    f.write(f"[normalize] {datetime.now().isoformat()} NON_JSON_RESPONSE type={content_type} len={data_len}\n")
+                    f.write(preview + "\n---\n")
+            except Exception:
+                pass
+            return _safe_json_response({'error': 'Unexpected non-JSON response from server', 'raw_type': content_type, 'raw_preview': preview, 'raw_len': data_len}, status=500)
+
+        # サイズが異常に大きい場合は切り捨てしてエラーにする
+        MAX_SAFE_BODY = 2 * 1024 * 1024  # 2MB
+        if data_len > MAX_SAFE_BODY:
+            try:
+                with open('/tmp/inbetweening_server.log', 'a') as f:
+                    f.write(f"[normalize] {datetime.now().isoformat()} OVERSIZED_RESPONSE len={data_len}\n")
+            except Exception:
+                pass
+            return _safe_json_response({'error': 'Response too large to be valid JSON', 'raw_len': data_len}, status=500)
+
+    except Exception as e:
+        # ミドルウェア自身の失敗はログに残し、コンシューマに安全なエラーを返す
+        try:
+            with open('/tmp/inbetweening_server.log', 'a') as f:
+                f.write(f"[normalize] {datetime.now().isoformat()} EXCEPTION: {traceback.format_exc()}\n")
+        except Exception:
+            pass
+        return _safe_json_response({'error': 'Internal normalization failure'}, status=500)
+
+    return response
 
 
 # グローバル例外ハンドラ: どの例外でも JSON を返す
@@ -282,8 +382,10 @@ def index():
                         // JSON でなければテキストとして読む（エラーメッセージ取得用）
                         try {
                             const txt = await response.text();
+                            console.log('raw response (non-json):', txt);
                             data = { text: txt };
                         } catch (e) {
+                            console.warn('Failed to read non-json response text', e);
                             data = null;
                         }
                     }
@@ -296,6 +398,7 @@ def index():
                         }
                     } else {
                         const errMsg = data?.error || data?.text || 'Unknown error';
+                        console.error('Generate returned error:', errMsg, 'raw:', data);
                         showMessage('❌ エラー: ' + errMsg, 'error');
                     }
                 } catch (error) {
@@ -333,6 +436,36 @@ def generate():
         except Exception:
             files_info = {}
         print(f"/generate called - form={form_dict}, files={files_info}")
+        # テスト用シミュレーションパラメータ: simulate=empty|invalid|slow
+        simulate = (request.form.get('simulate') or request.args.get('simulate') or '').strip().lower()
+        if simulate:
+            print(f"Simulate mode: {simulate}")
+            from flask import Response, redirect, stream_with_context
+            if simulate == 'empty':
+                # Content-Type は application/json のまま空レスポンスを返す
+                return Response('', status=200, mimetype='application/json')
+            if simulate == 'invalid':
+                # application/json だが不正な本文
+                return Response('this is not json', status=200, mimetype='application/json')
+            if simulate == 'slow':
+                import time
+                time.sleep(8)
+                # 続行して通常処理に進む (遅延)
+            if simulate == 'partial':
+                # 不完全なJSONを返す
+                return Response('{"list_url":"/files?dir=/tmp/inbetweening_output"', status=200, mimetype='application/json')
+            if simulate == 'status500':
+                return jsonify({'error': 'Simulated server error'}), 500
+            if simulate == 'html':
+                return Response('<html><body>Server error</body></html>', status=200, mimetype='text/html')
+            if simulate == 'redirect':
+                return redirect('/')
+            if simulate == 'close_early':
+                # ストリーミングで途中で切断するような挙動を模擬
+                def gen():
+                    yield '{"list_url":'
+                    return
+                return Response(stream_with_context(gen()), status=200, mimetype='application/json')
         if 'frame1' not in request.files or 'frame2' not in request.files:
             return jsonify({'error': 'フレーム画像が見つかりません'}), 400
 
