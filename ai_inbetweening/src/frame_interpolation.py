@@ -57,6 +57,16 @@ class FrameInterpolator:
             return self.toon_interpolator.interpolate_with_edge_linking(
                 frame1, frame2, num_frames
             )
+        elif self.model_type == 'dynamicrafter':
+            # DynamiCrafter 統合（外部 SDK / API を利用するラッパー）
+            try:
+                from .dynamicrafter_integration import generate_inbetweens
+                print("✓ Using DynamiCrafter integration")
+                return generate_inbetweens(frame1, frame2, num_frames=num_frames)
+            except Exception as e:
+                print(f"⚠ DynamiCrafter integration failed: {e}")
+                print("  Falling back to linear interpolation")
+                return self._interpolate_linear(frame1, frame2, num_frames)
         elif self.model_type == 'rife':
             return self._interpolate_rife(frame1, frame2, num_frames)
         elif self.model_type == 'morph':
