@@ -159,6 +159,10 @@ class FrameInterpolator:
             frame1_tensor = self._numpy_to_tensor(frame1, device)  # [1, 3, H, W]
             frame2_tensor = self._numpy_to_tensor(frame2, device)  # [1, 3, H, W]
             
+            # デバッグ: フレームの統計情報を出力
+            print(f"Frame1 stats: min={frame1.min()}, max={frame1.max()}, mean={frame1.mean()}")
+            print(f"Frame2 stats: min={frame2.min()}, max={frame2.max()}, mean={frame2.mean()}")
+
             # 複数フレーム生成
             for i in range(1, num_frames + 1):
                 t = i / (num_frames + 1)
@@ -172,6 +176,10 @@ class FrameInterpolator:
                 intermediate = self._tensor_to_numpy(intermediate_tensor)
                 interpolated_frames.append(intermediate)
             
+            # フレーム補間の結果を確認
+            for i, frame in enumerate(interpolated_frames):
+                print(f"Interpolated frame {i} stats: min={frame.min()}, max={frame.max()}, mean={frame.mean()}")
+
             return interpolated_frames
             
         except Exception as e:

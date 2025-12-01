@@ -287,58 +287,60 @@ def index():
 def generate():
     """フレームを生成"""
     
+    frame1_path = None
+    frame2_path = None
     try:
         if 'frame1' not in request.files or 'frame2' not in request.files:
             return jsonify({'error': 'フレーム画像が見つかりません'}), 400
-        
+
         frame1_file = request.files['frame1']
         frame2_file = request.files['frame2']
-        
+
         if frame1_file.filename == '' or frame2_file.filename == '':
             return jsonify({'error': 'ファイルが選択されていません'}), 400
-        
+
         num_frames = int(request.form.get('num_frames', 4))
         fps = int(request.form.get('fps', 24))
         output_subdir = (request.form.get('output_subdir') or '').strip()
         use_morphing = request.form.get('use_morphing', 'false').lower() == 'true'
         interpolation_mode = request.form.get('interpolation_mode', 'toon')  # toon, morph, rife
-        
+
         if num_frames < 2 or num_frames > 30:
             return jsonify({'error': 'フレーム数は2～30の範囲で指定してください'}), 400
-        
+
         if fps < 15 or fps > 60:
             return jsonify({'error': 'FPSは15～60の範囲で指定してください'}), 400
-        
+
         # 保存先を決定
         if output_subdir:
             safe_subdir = secure_filename(output_subdir)
             save_dir = os.path.join(app.config['OUTPUT_FOLDER'], safe_subdir)
         else:
             save_dir = app.config['OUTPUT_FOLDER']
-        
+
         os.makedirs(save_dir, exist_ok=True)
-        
+
         # ファイルを一時保存
         frame1_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename('frame1_' + frame1_file.filename))
         frame2_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename('frame2_' + frame2_file.filename))
-        
+
         frame1_file.save(frame1_path)
         frame2_file.save(frame2_path)
-        
+
         # ここから実際のエンジン処理
         from src import InbetWeeningEngine
         engine = InbetWeeningEngine(device='cpu', model_type=interpolation_mode)
-        
+
         # 画像読み込み
         from PIL import Image
         import numpy as np
-        
+
         frame1 = np.array(Image.open(frame1_path).convert('RGB'))
         frame2 = np.array(Image.open(frame2_path).convert('RGB'))
-        
+
         # 補間モード選択
         interpolator = engine.interpolator
-        
+
         if interpolation_mode == 'toon':
             print("✓ Using ToonComposer-style interpolation (edge-preserving, color-aware)")
             frames = interpolator.interpolate(frame1, frame2, num_frames)
@@ -353,10 +355,10 @@ def generate():
                 num_frames=num_frames,
                 save_path=None
             )
-        
+
         # タイムスタンプ付きで保存
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
+
         for idx, frame in enumerate(frames):
             if hasattr(frame, 'dtype') and (frame.dtype == 'float32' or frame.dtype == 'float64'):
                 frame_to_save = (frame * 255).astype('uint8')
@@ -365,30 +367,30 @@ def generate():
             img = Image.fromarray(frame_to_save)
             out_name = os.path.join(save_dir, f"{ts}_frame_{idx:04d}.png")
             img.save(out_name)
-        
+
         # 動画をエクスポート
         video_name = f"{ts}_output.mp4"
         video_path = os.path.join(save_dir, video_name)
         engine.export_video(frames, video_path, fps=fps)
-        
+
         # 一覧ページのURLを返す
         list_url = f"/files?dir={quote(save_dir)}"
         return jsonify({'status': 'ok', 'list_url': list_url})
-    
+
     except Exception as e:
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'エラーが発生しました: {str(e)}'}), 500
-    
+
     finally:
         try:
-            if os.path.exists(frame1_path):
+            if frame1_path and os.path.exists(frame1_path):
                 os.remove(frame1_path)
-            if os.path.exists(frame2_path):
+            if frame2_path and os.path.exists(frame2_path):
                 os.remove(frame2_path)
-        except:
-            pass
+        except Exception as cleanup_e:
+            print(f"Cleanup error: {cleanup_e}")
 
 
 @app.route('/files')
