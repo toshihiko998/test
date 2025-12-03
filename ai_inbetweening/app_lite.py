@@ -326,6 +326,7 @@ def index():
             </form>
 
             <div class="message" id="message"></div>
+            <pre id="rawResponse" style="display:none; white-space:pre-wrap; margin-top:12px; padding:12px; background:#f6f8fa; border:1px solid #e1e4e8; border-radius:6px; max-height:240px; overflow:auto;"></pre>
         </div>
 
         <script>
@@ -371,22 +372,47 @@ def index():
                     // 安全に JSON をパースする（非JSONや空レスポンスに対応）
                     let data = null;
                     const contentType = response.headers.get('content-type') || '';
+                    // Try to parse JSON; on failure, capture raw text and show it in-page
+                    let rawText = null;
                     if (contentType.includes('application/json')) {
                         try {
                             data = await response.json();
                         } catch (e) {
+                            try {
+                                rawText = await response.text();
+                            } catch (_) {
+                                rawText = '';
+                            }
                             console.warn('Invalid JSON from /generate:', e);
                             data = null;
                         }
                     } else {
-                        // JSON でなければテキストとして読む（エラーメッセージ取得用）
                         try {
-                            const txt = await response.text();
-                            console.log('raw response (non-json):', txt);
-                            data = { text: txt };
+                            rawText = await response.text();
+                            console.log('raw response (non-json):', rawText);
+                            data = { text: rawText };
                         } catch (e) {
                             console.warn('Failed to read non-json response text', e);
                             data = null;
+                        }
+                    }
+
+                    // Display raw response content when available for easier debugging
+                    const rawEl = document.getElementById('rawResponse');
+                    if (rawEl) {
+                        if (rawText) {
+                            rawEl.style.display = 'block';
+                            rawEl.textContent = rawText;
+                        } else if (data && typeof data === 'object') {
+                            rawEl.style.display = 'block';
+                            try {
+                                rawEl.textContent = JSON.stringify(data, null, 2);
+                            } catch (e) {
+                                rawEl.textContent = String(data);
+                            }
+                        } else {
+                            rawEl.style.display = 'none';
+                            rawEl.textContent = '';
                         }
                     }
 
@@ -397,8 +423,8 @@ def index():
                             showMessage('✅ 生成完了しました', 'success');
                         }
                     } else {
-                        const errMsg = data?.error || data?.text || 'Unknown error';
-                        console.error('Generate returned error:', errMsg, 'raw:', data);
+                        const errMsg = data?.error || data?.text || rawText || 'Unknown error';
+                        console.error('Generate returned error:', errMsg, 'raw:', data || rawText);
                         showMessage('❌ エラー: ' + errMsg, 'error');
                     }
                 } catch (error) {
